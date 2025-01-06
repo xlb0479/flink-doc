@@ -200,4 +200,233 @@ public class FraudDetector extends KeyedProcessFunction<Long, Transaction, Alert
 
 为了解决这个问题，Flink提供了一些容错状态原语，用起来跟普通的成员变量没什么差别。
 
-Flink中最基本的状态类型是[ValueState](../04应用开发/02DataStream%20API/04状态和容错/01状态.md)，它可以对其包装的各种类型提供容错能力。
+Flink中最基本的状态类型是[ValueState](../04应用开发/02DataStream%20API/04状态和容错/01状态.md)，它可以对其包装的各种类型提供容错能力。`ValueState`格式属于 *`keyed state`* ，也就是说它只能应用于 *`keyed context`* 中的算子，算子是紧跟着`DataStream#keyBy`。算子的 *`keyed state`* 会自动划归到当前正在处理记录的key。在本例中，key就是当前交易的账户id（它是通过` keyBy()`声明的），`FraudDetector`为每个账户维护了一个独立的状态。`ValueState`是用`ValueStateDescriptor`创建的，其中包含了一些元数据，Flink用这些元数据来管理这些变量。状态的注册发生于数据开始处理之前。也就是要使用下面说的`open()`方法作为钩子。
+
+```java
+public class FraudDetector extends KeyedProcessFunction<Long, Transaction, Alert> {
+
+    private static final long serialVersionUID = 1L;
+
+    private transient ValueState<Boolean> flagState;
+
+    @Override
+    public void open(OpenContext openContext) {
+        ValueStateDescriptor<Boolean> flagDescriptor = new ValueStateDescriptor<>(
+                "flag",
+                Types.BOOLEAN);
+        flagState = getRuntimeContext().getState(flagDescriptor);
+    }
+```
+
+`ValueState`属于包装类，类似Java标准库中的`AtomicReference`或`AtomicLong`。它提供了三个用来操作数据的方法，`update`可以设置状态，`value`读取当前状态，`clear`则清空内容。如果一个key的状态是空的，比如应用刚启动的时候，或者调用了`ValueState#clear`，那么`ValueState#value`返回的就是`null`。如果对`ValueState#value`方法返回的对象进行修改，这种修改无法确保能被系统感知到，因此所有的修改必须要用`ValueState#update`。除了这种需要特别指出的情况外，容错功能都是Flink底层提供的，你使用的时候就跟普通变量没什么区别。
+
+下面你可以看到如何使用一个标记状态来跟踪潜在的欺诈交易。
+
+```java
+@Override
+public void processElement(
+        Transaction transaction,
+        Context context,
+        Collector<Alert> collector) throws Exception {
+
+    // Get the current state for the current key
+    Boolean lastTransactionWasSmall = flagState.value();
+
+    // Check if the flag is set
+    if (lastTransactionWasSmall != null) {
+        if (transaction.getAmount() > LARGE_AMOUNT) {
+            // Output an alert downstream
+            Alert alert = new Alert();
+            alert.setId(transaction.getAccountId());
+
+            collector.collect(alert);            
+        }
+
+        // Clean up our state
+        flagState.clear();
+    }
+
+    if (transaction.getAmount() < SMALL_AMOUNT) {
+        // Set the flag to true
+        flagState.update(true);
+    }
+}
+```
+
+对于每笔交易都会检查该账户的标记。注意`ValueState`始终是关联到当前key的，也就是这里的账户。如果标记非空，那么该账户的上一笔交易就是小额交易，并且如果当前交易是大额交易，那么就要给出一个欺诈告警。
+
+检查过后自然要清空标记状态，不论当前交易是否触发欺诈告警。
+
+最后，还要检查当前交易是否是小额交易。如果是，那么就要设置标记，给下一次事件提供依据。注意`ValueState<Boolean>`包含了三种状态，未设置（`null`）、`true`、`false`，因为所有的`ValueState`都是nullable的。这个例子只使用了未设置（`null`）和`true`，只判断有没有值。
+
+## 版本v2：状态+时间=❤️
+
+犯罪分子对于他们要进行的大额交易不会等太久，以免他们之前做的验证性的交易被发现。那么你可以在欺诈检测中设置一个1分钟的超时时间，对于前面的例子来说，交易3和4只有在相距1分钟之内发生才会被认定为欺诈。Flink的`KeyedProcessFunction`允许你设置定时器，在之后的某个时间触发一个回调方法。
+
+现在我们看一下要怎么修改：
+
+- 当标记值被设置为`true`时，同时启动一个1分钟的定时器。
+- 定时器到点时，清空状态以重置标记。
+- 如果标记已经被清除了，那么定时器也要取消掉。
+
+如果要取消一个定时器，需要记住它所设定的时间，要记住也就意味着需要一个状态，所以我们先来创建一个定时器状态，和标记状态在一起。
+
+```java
+private transient ValueState<Boolean> flagState;
+private transient ValueState<Long> timerState;
+
+@Override
+public void open(OpenContext openContext) {
+    ValueStateDescriptor<Boolean> flagDescriptor = new ValueStateDescriptor<>(
+            "flag",
+            Types.BOOLEAN);
+    flagState = getRuntimeContext().getState(flagDescriptor);
+
+    ValueStateDescriptor<Long> timerDescriptor = new ValueStateDescriptor<>(
+            "timer-state",
+            Types.LONG);
+    timerState = getRuntimeContext().getState(timerDescriptor);
+}
+```
+
+`KeyedProcessFunction#processElement`调用时它的`Context`中包含了一个定时器服务。这个定时器服务可以用来查询当前时间、注册的定时器，还可以删除定时器。有了它，每次设置标记的时候你就可以设置一个未来1分钟的定时器，并且将时间戳保存在`timerState`中。
+
+```java
+if (transaction.getAmount() < SMALL_AMOUNT) {
+    // set the flag to true
+    flagState.update(true);
+
+    // set the timer and timer state
+    long timer = context.timerService().currentProcessingTime() + ONE_MINUTE;
+    context.timerService().registerProcessingTimeTimer(timer);
+    timerState.update(timer);
+}
+```
+
+其中的processing time是现实世界实际时间，由算子所在机器的系统所决定。
+
+当定时器触发时，它会调用`KeyedProcessFunction#onTimer`。覆盖这个方法可以实现你的回调逻辑，重置标记。
+
+```java
+public void onTimer(long timestamp, OnTimerContext ctx, Collector<Alert> out) {
+    // remove flag after 1 minute
+    timerState.clear();
+    flagState.clear();
+}
+```
+
+最后，要取消这个定时器，需要删除已注册的定时器，并且删除定时器状态。可以把这部分逻辑封到一个单独的方法里一次性调用。
+
+```java
+private void cleanUp(Context ctx) throws Exception {
+    // delete timer
+    Long timer = timerState.value();
+    ctx.timerService().deleteProcessingTimeTimer(timer);
+
+    // clean up all state
+    timerState.clear();
+    flagState.clear();
+}
+```
+
+好了现在完成了，一个功能齐全、有状态、分布式的流处理应用！
+
+## 最终代码
+
+```java
+import org.apache.flink.api.common.functions.OpenContext;
+import org.apache.flink.api.common.state.ValueState;
+import org.apache.flink.api.common.state.ValueStateDescriptor;
+import org.apache.flink.api.common.typeinfo.Types;
+import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
+import org.apache.flink.util.Collector;
+import org.apache.flink.walkthrough.common.entity.Alert;
+import org.apache.flink.walkthrough.common.entity.Transaction;
+
+public class FraudDetector extends KeyedProcessFunction<Long, Transaction, Alert> {
+
+    private static final long serialVersionUID = 1L;
+
+    private static final double SMALL_AMOUNT = 1.00;
+    private static final double LARGE_AMOUNT = 500.00;
+    private static final long ONE_MINUTE = 60 * 1000;
+
+    private transient ValueState<Boolean> flagState;
+    private transient ValueState<Long> timerState;
+
+    @Override
+    public void open(OpenContext openContext) {
+        ValueStateDescriptor<Boolean> flagDescriptor = new ValueStateDescriptor<>(
+                "flag",
+                Types.BOOLEAN);
+        flagState = getRuntimeContext().getState(flagDescriptor);
+
+        ValueStateDescriptor<Long> timerDescriptor = new ValueStateDescriptor<>(
+                "timer-state",
+                Types.LONG);
+        timerState = getRuntimeContext().getState(timerDescriptor);
+    }
+
+    @Override
+    public void processElement(
+            Transaction transaction,
+            Context context,
+            Collector<Alert> collector) throws Exception {
+
+        // Get the current state for the current key
+        Boolean lastTransactionWasSmall = flagState.value();
+
+        // Check if the flag is set
+        if (lastTransactionWasSmall != null) {
+            if (transaction.getAmount() > LARGE_AMOUNT) {
+                //Output an alert downstream
+                Alert alert = new Alert();
+                alert.setId(transaction.getAccountId());
+
+                collector.collect(alert);
+            }
+            // Clean up our state
+            cleanUp(context);
+        }
+
+        if (transaction.getAmount() < SMALL_AMOUNT) {
+            // set the flag to true
+            flagState.update(true);
+
+            long timer = context.timerService().currentProcessingTime() + ONE_MINUTE;
+            context.timerService().registerProcessingTimeTimer(timer);
+
+            timerState.update(timer);
+        }
+    }
+
+    @Override
+    public void onTimer(long timestamp, OnTimerContext ctx, Collector<Alert> out) {
+        // remove flag after 1 minute
+        timerState.clear();
+        flagState.clear();
+    }
+
+    private void cleanUp(Context ctx) throws Exception {
+        // delete timer
+        Long timer = timerState.value();
+        ctx.timerService().deleteProcessingTimeTimer(timer);
+
+        // clean up all state
+        timerState.clear();
+        flagState.clear();
+    }
+}
+```
+
+### 示例输出
+
+使用`TransactionSource`这个source来运行上面的代码，会对账户3给出欺诈告警。在你的task manager中会看到下面的日志：
+
+```log
+2019-08-19 14:22:06,220 INFO  org.apache.flink.walkthrough.common.sink.AlertSink - Alert{id=3}
+2019-08-19 14:22:11,383 INFO  org.apache.flink.walkthrough.common.sink.AlertSink - Alert{id=3}
+2019-08-19 14:22:16,551 INFO  org.apache.flink.walkthrough.common.sink.AlertSink - Alert{id=3}
+2019-08-19 14:22:21,723 INFO  org.apache.flink.walkthrough.common.sink.AlertSink - Alert{id=3}
+2019-08-19 14:22:26,896 INFO  org.apache.flink.walkthrough.common.sink.AlertSink - Alert{id=3}
+```
