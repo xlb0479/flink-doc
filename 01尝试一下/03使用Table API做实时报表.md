@@ -209,3 +209,40 @@ public static Table report(Table transactions) {
 基于时间的聚合有其特殊性，因为时间与其他属性不同，往往是在流式应用中不断向前移动的。和`floor`以及你的自定义函数不同，窗口函数是内置函数，可以在运行时增加额外的优化。在批处理环境下，窗口函数可以用来根据时间戳对记录进行分组，是一种非常方便的API。
 
 此时继续跑测试，这种实现依然没有问题。
+
+## 搞成流式的
+
+现在我们已经做成一个功能齐全，有状态，分布式的流式应用了！上面的查询会持续地从Kafka中消费交易流，计算每小时的花费，然后及时产出结果。由于输入是无限的，这个查询会一直运行下去，除非人为停止。由于Job中使用了窗口聚合，Flink可以进行特定的优化操作，比如框架发现某个窗口没有更多数据之后，就会进行状态清理。
+
+这个程序完全docker化了，以流式应用运行在本地。环境中包含了一个Kafka的topic，一个连续的数据生成器，MySql，以及Grafana。
+
+进入`table-walkthrough`目录启动docker-compose脚本。
+
+```shell
+$ docker-compose build
+$ docker-compose up -d
+```
+
+然后可以通过[Flink控制台](http://localhost:8082/)查看作业的运行信息。
+
+![01尝试一下-03使用TableAPI做实时报表-01.png](01尝试一下-03使用TableAPI做实时报表-01.png)
+
+到MySQL中看一下结果。
+
+```shell
+$ docker-compose exec mysql mysql -Dsql-demo -usql-demo -pdemo-sql
+
+mysql> use sql-demo;
+Database changed
+
+mysql> select count(*) from spend_report;
++----------+
+| count(*) |
++----------+
+|      110 |
++----------+
+```
+
+最后在[Grafana](http://localhost:3000/d/FOe0PbmGk/walkthrough?viewPanel=2&orgId=1&refresh=5s)看一下可视化效果！
+
+![01尝试一下-03使用TableAPI做实时报表-02.png](01尝试一下-03使用TableAPI做实时报表-02.png)
