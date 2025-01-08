@@ -168,4 +168,4 @@ DataStream<String> lines = env.readTextFile("file:///path");
 
 ## 实战练习
 
-现在你拥有的足够的知识，可以开始写一个简单的DataStream应用了。可以拉一下[flink-training-repo](https://github.com/apache/flink-training/tree/release-1.20/)这个代码，按照README中的指引操作，完成第一个练习：[流的过滤（车程清理）](https://github.com/apache/flink-training/blob/release-1.20//ride-cleansing)。
+现在你拥有了足够的知识，可以开始写一个简单的DataStream应用了。可以拉一下[flink-training-repo](https://github.com/apache/flink-training/tree/release-1.20/)这个代码，按照README中的指引操作，完成第一个练习：[流的过滤（车程清理）](https://github.com/apache/flink-training/blob/release-1.20//ride-cleansing)。
