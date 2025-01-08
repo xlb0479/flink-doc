@@ -253,7 +253,7 @@ Suspending job "<job-id>" with a savepoint.
 Savepoint completed. Path: file:<savepoint-path>
 ```
 
-Savepoint保存在`execution.checkpointing.savepoint-dir`指定的目录中，可以在[*Flink配置文件*](../07部署/04配置.md#flink配置文件)中修改，现在是挂到了你本机的*/tmp/flink-savepoints-directory/*目录。下一步会用到这个路径。
+Savepoint保存在`execution.checkpointing.savepoint-dir`指定的目录中，可以在[*Flink配置文件*](../07部署/04配置.md#flink配置文件)中修改，现在是挂到了你本机的 */tmp/flink-savepoints-directory/* 目录。下一步会用到这个路径。
 
 ##### REST API
 
