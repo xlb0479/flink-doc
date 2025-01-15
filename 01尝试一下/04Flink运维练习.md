@@ -4,9 +4,9 @@ Flink的部署和运维，在不同环境中有不同的方法。但不论怎么
 
 ## 环境介绍
 
-这次练习要做的包括一个长期运行的[Flink会话集群](../03概念/04术语.md#flink会话集群)和一个Kafka集群。
+这次练习要做的包括一个长期运行的[Flink会话集群](../03概念/05术语.md#flink会话集群)和一个Kafka集群。
 
-一个Flink集群包括一个[JobManager](../03概念/04术语.md#jobmangager)和一个或多个[TaskManager](../03概念/04术语.md#taskmanager)。JobManager负责处理[Job](../03概念/04术语.md#flink作业job)的提交、监管以及资源管理。TaskManager则担任工作进程，负责执行真正的[Task](../03概念/04术语.md#task)，Job也就是由Task组成的。本次练习中，一开始你只弄一个TaskManager，但紧接着就会扩展出多个TaskManager。本次练习还会搞一个专门的*客户端*容器，我们一开始会用它来提交Flink Job，后面继续用它来搞各种运维动作。*客户端*容器并不属于Flink集群本身，只是拿来简化操作。
+一个Flink集群包括一个[JobManager](../03概念/05术语.md#jobmangager)和一个或多个[TaskManager](../03概念/05术语.md#taskmanager)。JobManager负责处理[Job](../03概念/05术语.md#flink作业job)的提交、监管以及资源管理。TaskManager则担任工作进程，负责执行真正的[Task](../03概念/05术语.md#task)，Job也就是由Task组成的。本次练习中，一开始你只弄一个TaskManager，但紧接着就会扩展出多个TaskManager。本次练习还会搞一个专门的*客户端*容器，我们一开始会用它来提交Flink Job，后面继续用它来搞各种运维动作。*客户端*容器并不属于Flink集群本身，只是拿来简化操作。
 
 Kafka集群包括一个Zookeeper和一个Kafka Broker。
 

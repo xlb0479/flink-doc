@@ -192,7 +192,7 @@ public class FraudDetector extends KeyedProcessFunction<Long, Transaction, Alert
 
 交易3和4应当被标记成欺诈，因为它就是一个小额交易0.09美元，后面紧跟着一个大额交易510美元。而对于交易7、8、9，则不是欺诈，因为0.02美元的小额交易后面没有紧跟着的大额交易，中间有一笔交易打破了这个模式设定。
 
-为了实现这个功能，欺诈检测需要在多个事件之间做到*remember*。大额交易只有前一个是小额交易的情况下才能标记为欺诈。记忆信息就需要[状态(state)](../03概念/04术语.md#managed-state)，这也是我们为什么要用[KeyedProcessFunction](../04应用开发/02DataStream%20API/06算子/04ProcessFunction.md)。它对于状态和时间都提供了细粒度的控制能力，使我们的算法得以改进，满足更加复杂的需要。
+为了实现这个功能，欺诈检测需要在多个事件之间做到*remember*。大额交易只有前一个是小额交易的情况下才能标记为欺诈。记忆信息就需要[状态(state)](../03概念/05术语.md#managed-state)，这也是我们为什么要用[KeyedProcessFunction](../04应用开发/02DataStream%20API/06算子/04ProcessFunction.md)。它对于状态和时间都提供了细粒度的控制能力，使我们的算法得以改进，满足更加复杂的需要。
 
 最直接的实现方式就是用一个布尔标记，遇到小额交易就标记一下。遇到大额交易的时候，就可以检查该账户下这个标记的状态。
 
